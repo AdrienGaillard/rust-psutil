@@ -19,63 +19,63 @@ use utils::read_file;
 #[derive(Debug)]
 pub struct MountedPartition {
     /// This field describes the block special device or remote filesystem to be mounted.
-    device: String,
+    pub device: String,
 
     /// This field describes the block special device or remote filesystem to be mounted.
-    mountpoint: String,
+    pub mountpoint: String,
 
     /// This field describes the type of the filesystem.
-    fstype: String,
+    pub fstype: String,
 
     /// This field describes the mount options associated with the filesystem.
-    opts: String,
+    pub opts: String,
 }
 
 /// Struct that contains disk usage informations
 #[derive(Copy, Clone, Debug)]
 pub struct DiskUsage {
     /// Total disk in bytes
-    total: u64,
+    pub total: u64,
 
     /// Disk used part in bytes
-    used: u64,
+    pub used: u64,
 
     /// Disk free part in bytes
-    free: u64,
+    pub free: u64,
 
     /// Percentage of used disk
-    percent: f64,
+    pub percent: f64,
 }
 
 /// Disk counter struct
 #[derive(Clone, Copy, Debug)]
 pub struct DiskIOCounters {
     /// Number of reads
-    read_count: u64,
+    pub read_count: u64,
 
     /// Number of writes
-    write_count: u64,
+    pub write_count: u64,
 
     /// Number of bytes read
-    read_bytes: u64,
+    pub read_bytes: u64,
 
     /// Number of bytes written
-    write_bytes: u64,
+    pub write_bytes: u64,
 
     /// Time spent reading from disk (in milliseconds)
-    read_time: u64,
+    pub read_time: u64,
 
     /// Time spent writing to disk (in milliseconds)
-    write_time: u64,
+    pub write_time: u64,
 
     /// Time spent doing actual I/Os (in milliseconds)
-    read_merged_count: u64,
+    pub read_merged_count: u64,
 
     /// Number of merged reads
-    write_merged_count: u64,
+    pub write_merged_count: u64,
 
     /// Number of merged writes
-    busy_time: u64,
+    pub busy_time: u64,
 }
 
 /// Disk counter struct to use nowrap mode
