@@ -54,7 +54,7 @@ pub struct DiskIOCounters {
     read_count: u64,
 
     /// Number of writes
-    write_count: i64,
+    write_count: u64,
 
     /// Number of bytes read
     read_bytes: u64,
@@ -79,41 +79,125 @@ pub struct DiskIOCounters {
 }
 
 /// Disk counter struct to use nowrap mode
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct DiskIOCountersNoWrap {
     /// Save the total of counters
-    disk_io_counters: DiskIOCounters,
+    disk_io_counters: Vec<DiskIOCounters>,
 
     /// Save the values of the last call of disk_io_counters
-    disk_io_counters_last_call: DiskIOCounters,
+    disk_io_counters_last_call: Vec<DiskIOCounters>,
+
+    initialize: bool,
 }
 
 impl DiskIOCountersNoWrap {
     /// Initialize a DiskIOCountersNoWrap struct
     pub fn new() -> DiskIOCountersNoWrap {
         DiskIOCountersNoWrap {
-            disk_io_counters: DiskIOCounters {
-                read_count: 0,
-                write_count: 0,
-                read_bytes: 0,
-                write_bytes: 0,
-                read_time: 0,
-                write_time: 0,
-                read_merged_count: 0,
-                write_merged_count: 0,
-                busy_time: 0,
-            },
-            disk_io_counters_last_call: DiskIOCounters {
-                read_count: 0,
-                write_count: 0,
-                read_bytes: 0,
-                write_bytes: 0,
-                read_time: 0,
-                write_time: 0,
-                read_merged_count: 0,
-                write_merged_count: 0,
-                busy_time: 0,
-            },
+            disk_io_counters: Vec::new(),
+            disk_io_counters_last_call: Vec::new(),
+            initialize: false,
+        }
+    }
+
+    /// Reset de cache for disk_io_counter in nowrap mode
+    pub fn cache_clear(&mut self) {
+        self.disk_io_counters = Vec::new();
+        self.disk_io_counters_last_call = Vec::new();
+        self.initialize = false;
+    }
+
+    /// Return system-wide disk I/O statistics as a DiskIOCounters structs
+    ///
+    /// If nowrap is true psutil will detect and adjust those numbers across
+    /// function calls and add “old value” to “new value” so that the returned
+    /// numbers will always be increasing or remain the same, but never decrease.
+    /// <DiskIOCountersNoWrap>.cache_clear() can be used to invalidate the nowrap cache.
+    pub fn disk_io_counters(&mut self, nowrap: bool) -> Result<DiskIOCounters> {
+        let disk_io_counters_vector = self.disk_io_counters_perdisk(nowrap)?;
+        let mut disk_io_counters_total = DiskIOCounters {
+            read_count: 0,
+            write_count: 0,
+            read_bytes: 0,
+            write_bytes: 0,
+            read_time: 0,
+            write_time: 0,
+            read_merged_count: 0,
+            write_merged_count: 0,
+            busy_time: 0,
+        };
+        for disk_io_counters in disk_io_counters_vector {
+            disk_io_counters_total.read_count += disk_io_counters.read_count;
+            disk_io_counters_total.write_count += disk_io_counters.write_count;
+            disk_io_counters_total.read_bytes += disk_io_counters.read_bytes;
+            disk_io_counters_total.write_bytes += disk_io_counters.write_bytes;
+            disk_io_counters_total.read_time += disk_io_counters.read_time;
+            disk_io_counters_total.write_time += disk_io_counters.write_time;
+            disk_io_counters_total.read_merged_count += disk_io_counters.read_merged_count;
+            disk_io_counters_total.write_merged_count += disk_io_counters.write_merged_count;
+            disk_io_counters_total.busy_time += disk_io_counters.busy_time;
+        }
+        Ok(disk_io_counters_total)
+    }
+
+    /// Return system-wide disk I/O statistics per disk as a vector of a DiskIOCounters structs
+    ///
+    /// If nowrap is true psutil will detect and adjust those numbers across
+    /// function calls and add “old value” to “new value” so that the returned
+    /// numbers will always be increasing or remain the same, but never decrease.
+    /// <DiskIOCountersNoWrap>.cache_clear() can be used to invalidate the nowrap cache.
+    pub fn disk_io_counters_perdisk(&mut self, nowrap: bool) -> Result<Vec<DiskIOCounters>> {
+        let partitions = read_file(Path::new("/proc/partitions"))?;
+        let partitions = get_partitions(&partitions)?;
+        let disk_stats = read_file(Path::new("/proc/diskstats"))?;
+        let lines: Vec<&str> = disk_stats.lines().collect();
+        let mut disks_infos: Vec<DiskIOCounters> = Vec::new();
+
+        for line in lines {
+            let mut disk_infos: Vec<&str> = line.split_whitespace().collect();
+            if disk_infos.len() == 14 {
+                let name: &str = disk_infos[2];
+                disk_infos.remove(2);
+                disk_infos.remove(1);
+                disk_infos.remove(0);
+                let disk_infos: Vec<u64> = line_disk_stats(disk_infos)?;
+
+                // This function does not support kernel version under 2.6+
+                if partitions.contains(&name) {
+                    let ssize = get_sector_size(name)?;
+                    disks_infos.push(DiskIOCounters {
+                        read_count: disk_infos[0],
+                        write_count: disk_infos[4],
+                        read_bytes: disk_infos[2] * ssize,
+                        write_bytes: disk_infos[6] * ssize,
+                        read_time: disk_infos[3],
+                        write_time: disk_infos[7],
+                        read_merged_count: disk_infos[1],
+                        write_merged_count: disk_infos[5],
+                        busy_time: disk_infos[9],
+                    });
+                }
+            } else {
+                return Err(Error::new(
+                      ErrorKind::InvalidData,
+                      format!("/proc/diskstats has ne the right number of values. Maybe your kernel version is too old (Kernel 2.6+ minimum)."),
+                  ));
+            }
+        }
+
+        if nowrap {
+            if self.initialize {
+                self.disk_io_counters =
+                    total_disk_io_counters(&self.disk_io_counters_last_call, &disks_infos);
+                self.disk_io_counters_last_call = disks_infos;
+            } else {
+                self.disk_io_counters = disks_infos.clone();
+                self.disk_io_counters_last_call = disks_infos;
+                self.initialize = true;
+            }
+            return Ok(self.disk_io_counters.clone());
+        } else {
+            return Ok(disks_infos);
         }
     }
 }
@@ -180,6 +264,123 @@ fn get_partitions(data: &str) -> Result<Vec<&str>> {
         }
     }
     Ok(partitions)
+}
+
+fn get_sector_size(partition_name: &str) -> Result<u64> {
+    let path = format!("/sys/block/{}/queue/hw_sector_size", partition_name);
+    let partition_size = match read_file(Path::new(&path)) {
+        Ok(r) => r,
+        // man iostat states that sectors are equivalent with blocks and
+        // have a size of 512 bytes since 2.4 kernels
+        Err(_) => return Ok(512),
+    };
+    match partition_size.trim().parse::<u64>() {
+        Ok(v) => Ok(v),
+        Err(_) => {
+            return Err(Error::new(
+                ErrorKind::InvalidData,
+                format!("failed to parse {} in get_sector_size", partition_size),
+            ))
+        }
+    }
+}
+
+fn line_disk_stats(line: Vec<&str>) -> Result<Vec<u64>> {
+    let mut result: Vec<u64> = Vec::new();
+    for value in line {
+        result.push(match value.parse::<u64>() {
+            Ok(v) => v,
+            Err(_) => {
+                return Err(Error::new(
+                    ErrorKind::InvalidData,
+                    format!("failed to parse {} in get_sector_size", value),
+                ))
+            }
+        });
+    }
+
+    Ok(result)
+}
+
+fn total_disk_io_counters(
+    past_disk_io_counters: &Vec<DiskIOCounters>,
+    current_disk_io_counters: &Vec<DiskIOCounters>,
+) -> Vec<DiskIOCounters> {
+    let mut total_disk_io_counters: Vec<DiskIOCounters> = Vec::new();
+    let max_value: u64 = 4294967296;
+    if past_disk_io_counters.len() == current_disk_io_counters.len() {
+        for (iter, past_counters) in past_disk_io_counters.iter().enumerate() {
+            let current_counters = current_disk_io_counters[iter];
+            total_disk_io_counters.push(DiskIOCounters {
+                read_count: {
+                    if current_counters.read_count >= past_counters.read_count {
+                        current_counters.read_count
+                    } else {
+                        current_counters.read_count + max_value - past_counters.read_count
+                    }
+                },
+                write_count: {
+                    if current_counters.write_count >= past_counters.write_count {
+                        current_counters.write_count
+                    } else {
+                        current_counters.write_count + max_value - past_counters.write_count
+                    }
+                },
+                read_bytes: {
+                    if current_counters.read_bytes >= past_counters.read_bytes {
+                        current_counters.read_bytes
+                    } else {
+                        current_counters.read_bytes + max_value - past_counters.read_bytes
+                    }
+                },
+                write_bytes: {
+                    if current_counters.write_bytes >= past_counters.write_bytes {
+                        current_counters.write_bytes
+                    } else {
+                        current_counters.write_bytes + max_value - past_counters.write_bytes
+                    }
+                },
+                read_time: {
+                    if current_counters.read_time >= past_counters.read_time {
+                        current_counters.read_time
+                    } else {
+                        current_counters.read_time + max_value - past_counters.read_time
+                    }
+                },
+                write_time: {
+                    if current_counters.write_time >= past_counters.write_time {
+                        current_counters.write_time
+                    } else {
+                        current_counters.write_time + max_value - past_counters.write_time
+                    }
+                },
+                read_merged_count: {
+                    if current_counters.read_merged_count >= past_counters.read_merged_count {
+                        current_counters.read_merged_count
+                    } else {
+                        current_counters.read_merged_count + max_value
+                            - past_counters.read_merged_count
+                    }
+                },
+                write_merged_count: {
+                    if current_counters.write_merged_count >= past_counters.write_merged_count {
+                        current_counters.write_merged_count
+                    } else {
+                        current_counters.write_merged_count + max_value
+                            - past_counters.write_merged_count
+                    }
+                },
+                busy_time: {
+                    if current_counters.busy_time >= past_counters.busy_time {
+                        current_counters.busy_time
+                    } else {
+                        current_counters.busy_time + max_value - past_counters.busy_time
+                    }
+                },
+            });
+        }
+    }
+    total_disk_io_counters
 }
 
 /// Return all mounted disk partitions as a DiskPartitions struct including device,
