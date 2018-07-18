@@ -1,12 +1,6 @@
 //! Load disk informations
 //! Author : Adrien Gaillard
 
-#![deny(
-    missing_docs, missing_debug_implementations, missing_copy_implementations, trivial_casts,
-    trivial_numeric_casts, unstable_features, unused_import_braces, unused_qualifications,
-    unsafe_code
-)]
-/// To delete !!
 extern crate libc;
 
 use std::collections::HashMap;
