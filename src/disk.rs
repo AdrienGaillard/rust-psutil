@@ -6,7 +6,7 @@
     trivial_numeric_casts, unstable_features, unused_import_braces, unused_qualifications,
     unsafe_code
 )]
-
+/// To delete !!
 extern crate libc;
 
 use std::ffi::CString;
@@ -259,6 +259,7 @@ fn get_partitions(data: &str) -> Result<Vec<&str>> {
     Ok(partitions)
 }
 
+/// Determine the sector size of the partition name given in parameter
 fn get_sector_size(partition_name: &str) -> Result<u64> {
     let path = format!("/sys/block/{}/queue/hw_sector_size", partition_name);
     let partition_size = match read_file(Path::new(&path)) {
@@ -278,6 +279,7 @@ fn get_sector_size(partition_name: &str) -> Result<u64> {
     }
 }
 
+/// Convert a vector of &str in vector of u64. Values are from /proc/diskstats
 fn line_disk_stats(line: Vec<&str>) -> Result<Vec<u64>> {
     let mut result: Vec<u64> = Vec::new();
     for value in line {
@@ -295,6 +297,7 @@ fn line_disk_stats(line: Vec<&str>) -> Result<Vec<u64>> {
     Ok(result)
 }
 
+/// Calculate per disk the new DiskIOCounters after a call of disk_io_counters_perdisk
 fn total_disk_io_counters(
     past_disk_io_counters: &Vec<DiskIOCounters>,
     current_disk_io_counters: &Vec<DiskIOCounters>,
