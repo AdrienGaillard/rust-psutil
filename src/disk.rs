@@ -187,8 +187,11 @@ impl DiskIOCountersNoWrap {
 
         if nowrap {
             if self.initialize {
-                self.disk_io_counters =
-                    total_disk_io_counters(&self.disk_io_counters_last_call, &disks_infos);
+                self.disk_io_counters = total_disk_io_counters(
+                    &self.disk_io_counters_last_call,
+                    &disks_infos,
+                    &self.disk_io_counters,
+                );
                 self.disk_io_counters_last_call = disks_infos;
             } else {
                 self.disk_io_counters = disks_infos.clone();
@@ -230,18 +233,7 @@ fn get_partitions(data: &str) -> Result<Vec<&str>> {
     let mut partitions: Vec<&str> = Vec::new();
     for line in lines.iter().rev() {
         let fields: Vec<&str> = line.split_whitespace().collect();
-        if fields.len() == 4
-            && (fields[3].ends_with("0")
-                || fields[3].ends_with("1")
-                || fields[3].ends_with("2")
-                || fields[3].ends_with("3")
-                || fields[3].ends_with("4")
-                || fields[3].ends_with("5")
-                || fields[3].ends_with("6")
-                || fields[3].ends_with("7")
-                || fields[3].ends_with("8")
-                || fields[3].ends_with("9"))
-        {
+        if fields.len() == 4 && (fields[3].chars().last().unwrap().is_digit(10)) {
             // we're dealing with a partition (e.g. 'sda1'); 'sda' will
             // also be around but we want to omit it
             partitions.push(fields[3]);
@@ -305,82 +297,104 @@ fn line_disk_stats(line: Vec<&str>) -> Result<Vec<u64>> {
 fn total_disk_io_counters(
     past_disk_io_counters: &Vec<DiskIOCounters>,
     current_disk_io_counters: &Vec<DiskIOCounters>,
+    total_disk_io_counters: &Vec<DiskIOCounters>,
 ) -> Vec<DiskIOCounters> {
-    let mut total_disk_io_counters: Vec<DiskIOCounters> = Vec::new();
+    let mut final_disk_io_counters: Vec<DiskIOCounters> = Vec::new();
     let max_value: u64 = 4294967296;
-    if past_disk_io_counters.len() == current_disk_io_counters.len() {
+    if past_disk_io_counters.len() == current_disk_io_counters.len()
+        && past_disk_io_counters.len() == total_disk_io_counters.len()
+    {
         for (iter, past_counters) in past_disk_io_counters.iter().enumerate() {
             let current_counters = current_disk_io_counters[iter];
-            total_disk_io_counters.push(DiskIOCounters {
+            let total_counters = total_disk_io_counters[iter];
+            final_disk_io_counters.push(DiskIOCounters {
                 read_count: {
                     if current_counters.read_count >= past_counters.read_count {
-                        current_counters.read_count
+                        total_counters.read_count + current_counters.read_count
+                            - past_counters.read_count
                     } else {
-                        current_counters.read_count + max_value - past_counters.read_count
+                        total_counters.read_count + current_counters.read_count + max_value
+                            - past_counters.read_count
                     }
                 },
                 write_count: {
                     if current_counters.write_count >= past_counters.write_count {
-                        current_counters.write_count
+                        total_counters.write_count + current_counters.write_count
+                            - past_counters.write_count
                     } else {
-                        current_counters.write_count + max_value - past_counters.write_count
+                        total_counters.write_count + current_counters.write_count + max_value
+                            - past_counters.write_count
                     }
                 },
                 read_bytes: {
                     if current_counters.read_bytes >= past_counters.read_bytes {
-                        current_counters.read_bytes
+                        total_counters.read_bytes + current_counters.read_bytes
+                            - past_counters.read_bytes
                     } else {
-                        current_counters.read_bytes + max_value - past_counters.read_bytes
+                        total_counters.read_bytes + current_counters.read_bytes + max_value
+                            - past_counters.read_bytes
                     }
                 },
                 write_bytes: {
                     if current_counters.write_bytes >= past_counters.write_bytes {
-                        current_counters.write_bytes
+                        total_counters.write_bytes + current_counters.write_bytes
+                            - past_counters.write_bytes
                     } else {
-                        current_counters.write_bytes + max_value - past_counters.write_bytes
+                        total_counters.write_bytes + current_counters.write_bytes + max_value
+                            - past_counters.write_bytes
                     }
                 },
                 read_time: {
                     if current_counters.read_time >= past_counters.read_time {
-                        current_counters.read_time
+                        total_counters.read_time + current_counters.read_time
+                            - past_counters.read_time
                     } else {
-                        current_counters.read_time + max_value - past_counters.read_time
+                        total_counters.read_time + current_counters.read_time + max_value
+                            - past_counters.read_time
                     }
                 },
                 write_time: {
                     if current_counters.write_time >= past_counters.write_time {
-                        current_counters.write_time
+                        total_counters.write_time + current_counters.write_time
+                            - past_counters.write_time
                     } else {
-                        current_counters.write_time + max_value - past_counters.write_time
+                        total_counters.write_time + current_counters.write_time + max_value
+                            - past_counters.write_time
                     }
                 },
                 read_merged_count: {
                     if current_counters.read_merged_count >= past_counters.read_merged_count {
-                        current_counters.read_merged_count
-                    } else {
-                        current_counters.read_merged_count + max_value
+                        total_counters.read_merged_count + current_counters.read_merged_count
                             - past_counters.read_merged_count
+                    } else {
+                        total_counters.read_merged_count
+                            + current_counters.read_merged_count
+                            + max_value - past_counters.read_merged_count
                     }
                 },
                 write_merged_count: {
                     if current_counters.write_merged_count >= past_counters.write_merged_count {
-                        current_counters.write_merged_count
-                    } else {
-                        current_counters.write_merged_count + max_value
+                        total_counters.write_merged_count + current_counters.write_merged_count
                             - past_counters.write_merged_count
+                    } else {
+                        total_counters.write_merged_count
+                            + current_counters.write_merged_count
+                            + max_value - past_counters.write_merged_count
                     }
                 },
                 busy_time: {
                     if current_counters.busy_time >= past_counters.busy_time {
-                        current_counters.busy_time
+                        total_counters.busy_time + current_counters.busy_time
+                            - past_counters.busy_time
                     } else {
-                        current_counters.busy_time + max_value - past_counters.busy_time
+                        total_counters.busy_time + current_counters.busy_time + max_value
+                            - past_counters.busy_time
                     }
                 },
             });
         }
     }
-    total_disk_io_counters
+    final_disk_io_counters
 }
 
 /// Return all mounted disk partitions as a DiskPartitions struct including device,
