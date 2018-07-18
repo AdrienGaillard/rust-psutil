@@ -9,6 +9,7 @@
 /// To delete !!
 extern crate libc;
 
+use std::collections::HashMap;
 use std::ffi::CString;
 use std::io::{Error, ErrorKind, Result};
 use std::mem;
@@ -82,29 +83,25 @@ pub struct DiskIOCounters {
 #[derive(Clone, Debug)]
 pub struct DiskIOCountersNoWrap {
     /// Save the total of counters
-    disk_io_counters: Vec<DiskIOCounters>,
+    disk_io_counters: HashMap<String, DiskIOCounters>,
 
     /// Save the values of the last call of disk_io_counters
-    disk_io_counters_last_call: Vec<DiskIOCounters>,
-
-    initialize: bool,
+    disk_io_counters_last_call: HashMap<String, DiskIOCounters>,
 }
 
 impl DiskIOCountersNoWrap {
     /// Initialize a DiskIOCountersNoWrap struct
     pub fn new() -> DiskIOCountersNoWrap {
         DiskIOCountersNoWrap {
-            disk_io_counters: Vec::new(),
-            disk_io_counters_last_call: Vec::new(),
-            initialize: false,
+            disk_io_counters: HashMap::new(),
+            disk_io_counters_last_call: HashMap::new(),
         }
     }
 
     /// Reset de cache for disk_io_counter in nowrap mode
     pub fn cache_clear(&mut self) {
-        self.disk_io_counters = Vec::new();
-        self.disk_io_counters_last_call = Vec::new();
-        self.initialize = false;
+        self.disk_io_counters = HashMap::new();
+        self.disk_io_counters_last_call = HashMap::new();
     }
 
     /// Return system-wide disk I/O statistics as a DiskIOCounters structs
@@ -114,7 +111,7 @@ impl DiskIOCountersNoWrap {
     /// numbers will always be increasing or remain the same, but never decrease.
     /// <DiskIOCountersNoWrap>.cache_clear() can be used to invalidate the nowrap cache.
     pub fn disk_io_counters(&mut self, nowrap: bool) -> Result<DiskIOCounters> {
-        let disk_io_counters_vector = self.disk_io_counters_perdisk(nowrap)?;
+        let disk_io_counters_hashmap = self.disk_io_counters_perdisk(nowrap)?;
         let mut disk_io_counters_total = DiskIOCounters {
             read_count: 0,
             write_count: 0,
@@ -126,7 +123,7 @@ impl DiskIOCountersNoWrap {
             write_merged_count: 0,
             busy_time: 0,
         };
-        for disk_io_counters in disk_io_counters_vector {
+        for (_name, disk_io_counters) in disk_io_counters_hashmap {
             disk_io_counters_total.read_count += disk_io_counters.read_count;
             disk_io_counters_total.write_count += disk_io_counters.write_count;
             disk_io_counters_total.read_bytes += disk_io_counters.read_bytes;
@@ -146,12 +143,15 @@ impl DiskIOCountersNoWrap {
     /// function calls and add “old value” to “new value” so that the returned
     /// numbers will always be increasing or remain the same, but never decrease.
     /// <DiskIOCountersNoWrap>.cache_clear() can be used to invalidate the nowrap cache.
-    pub fn disk_io_counters_perdisk(&mut self, nowrap: bool) -> Result<Vec<DiskIOCounters>> {
+    pub fn disk_io_counters_perdisk(
+        &mut self,
+        nowrap: bool,
+    ) -> Result<HashMap<String, DiskIOCounters>> {
         let partitions = read_file(Path::new("/proc/partitions"))?;
         let partitions = get_partitions(&partitions)?;
         let disk_stats = read_file(Path::new("/proc/diskstats"))?;
         let lines: Vec<&str> = disk_stats.lines().collect();
-        let mut disks_infos: Vec<DiskIOCounters> = Vec::new();
+        let mut disks_infos: HashMap<String, DiskIOCounters> = HashMap::new();
 
         for line in lines {
             let mut disk_infos: Vec<&str> = line.split_whitespace().collect();
@@ -166,17 +166,20 @@ impl DiskIOCountersNoWrap {
 
                 if partitions.contains(&name) {
                     let ssize = get_sector_size(name)?;
-                    disks_infos.push(DiskIOCounters {
-                        read_count: disk_infos[0],
-                        write_count: disk_infos[4],
-                        read_bytes: disk_infos[2] * ssize,
-                        write_bytes: disk_infos[6] * ssize,
-                        read_time: disk_infos[3],
-                        write_time: disk_infos[7],
-                        read_merged_count: disk_infos[1],
-                        write_merged_count: disk_infos[5],
-                        busy_time: disk_infos[9],
-                    });
+                    disks_infos.insert(
+                        String::from(name),
+                        DiskIOCounters {
+                            read_count: disk_infos[0],
+                            write_count: disk_infos[4],
+                            read_bytes: disk_infos[2] * ssize,
+                            write_bytes: disk_infos[6] * ssize,
+                            read_time: disk_infos[3],
+                            write_time: disk_infos[7],
+                            read_merged_count: disk_infos[1],
+                            write_merged_count: disk_infos[5],
+                            busy_time: disk_infos[9],
+                        },
+                    );
                 }
             } else {
                 return Err(Error::new(
@@ -187,7 +190,7 @@ impl DiskIOCountersNoWrap {
         }
 
         if nowrap {
-            if self.initialize {
+            if !self.disk_io_counters.is_empty() {
                 self.disk_io_counters = total_disk_io_counters(
                     &self.disk_io_counters_last_call,
                     &disks_infos,
@@ -197,7 +200,6 @@ impl DiskIOCountersNoWrap {
             } else {
                 self.disk_io_counters = disks_infos.clone();
                 self.disk_io_counters_last_call = disks_infos;
-                self.initialize = true;
             }
             return Ok(self.disk_io_counters.clone());
         } else {
@@ -299,103 +301,108 @@ fn line_disk_stats(line: Vec<&str>) -> Result<Vec<u64>> {
 
 /// Calculate per disk the new DiskIOCounters after a call of disk_io_counters_perdisk
 fn total_disk_io_counters(
-    past_disk_io_counters: &Vec<DiskIOCounters>,
-    current_disk_io_counters: &Vec<DiskIOCounters>,
-    total_disk_io_counters: &Vec<DiskIOCounters>,
-) -> Vec<DiskIOCounters> {
-    let mut final_disk_io_counters: Vec<DiskIOCounters> = Vec::new();
+    past_disk_io_counters: &HashMap<String, DiskIOCounters>,
+    current_disk_io_counters: &HashMap<String, DiskIOCounters>,
+    total_disk_io_counters: &HashMap<String, DiskIOCounters>,
+) -> HashMap<String, DiskIOCounters> {
+    let mut final_disk_io_counters: HashMap<String, DiskIOCounters> = HashMap::new();
     let max_value: u64 = 4294967296;
-    if past_disk_io_counters.len() == current_disk_io_counters.len()
-        && past_disk_io_counters.len() == total_disk_io_counters.len()
-    {
-        for (iter, past_counters) in past_disk_io_counters.iter().enumerate() {
-            let current_counters = current_disk_io_counters[iter];
-            let total_counters = total_disk_io_counters[iter];
-            final_disk_io_counters.push(DiskIOCounters {
-                read_count: {
-                    if current_counters.read_count >= past_counters.read_count {
-                        total_counters.read_count + current_counters.read_count
-                            - past_counters.read_count
-                    } else {
-                        total_counters.read_count + current_counters.read_count + max_value
-                            - past_counters.read_count
-                    }
+    for (name, current_counters) in current_disk_io_counters {
+        if past_disk_io_counters.contains_key(name) && total_disk_io_counters.contains_key(name) {
+            let past_counters = past_disk_io_counters[name];
+            let total_counters = total_disk_io_counters[name];
+            final_disk_io_counters.insert(
+                name.clone(),
+                DiskIOCounters {
+                    read_count: {
+                        if current_counters.read_count >= past_counters.read_count {
+                            total_counters.read_count + current_counters.read_count
+                                - past_counters.read_count
+                        } else {
+                            total_counters.read_count + current_counters.read_count + max_value
+                                - past_counters.read_count
+                        }
+                    },
+                    write_count: {
+                        if current_counters.write_count >= past_counters.write_count {
+                            total_counters.write_count + current_counters.write_count
+                                - past_counters.write_count
+                        } else {
+                            total_counters.write_count + current_counters.write_count + max_value
+                                - past_counters.write_count
+                        }
+                    },
+                    read_bytes: {
+                        if current_counters.read_bytes >= past_counters.read_bytes {
+                            total_counters.read_bytes + current_counters.read_bytes
+                                - past_counters.read_bytes
+                        } else {
+                            total_counters.read_bytes + current_counters.read_bytes + max_value
+                                - past_counters.read_bytes
+                        }
+                    },
+                    write_bytes: {
+                        if current_counters.write_bytes >= past_counters.write_bytes {
+                            total_counters.write_bytes + current_counters.write_bytes
+                                - past_counters.write_bytes
+                        } else {
+                            total_counters.write_bytes + current_counters.write_bytes + max_value
+                                - past_counters.write_bytes
+                        }
+                    },
+                    read_time: {
+                        if current_counters.read_time >= past_counters.read_time {
+                            total_counters.read_time + current_counters.read_time
+                                - past_counters.read_time
+                        } else {
+                            total_counters.read_time + current_counters.read_time + max_value
+                                - past_counters.read_time
+                        }
+                    },
+                    write_time: {
+                        if current_counters.write_time >= past_counters.write_time {
+                            total_counters.write_time + current_counters.write_time
+                                - past_counters.write_time
+                        } else {
+                            total_counters.write_time + current_counters.write_time + max_value
+                                - past_counters.write_time
+                        }
+                    },
+                    read_merged_count: {
+                        if current_counters.read_merged_count >= past_counters.read_merged_count {
+                            total_counters.read_merged_count + current_counters.read_merged_count
+                                - past_counters.read_merged_count
+                        } else {
+                            total_counters.read_merged_count
+                                + current_counters.read_merged_count
+                                + max_value
+                                - past_counters.read_merged_count
+                        }
+                    },
+                    write_merged_count: {
+                        if current_counters.write_merged_count >= past_counters.write_merged_count {
+                            total_counters.write_merged_count + current_counters.write_merged_count
+                                - past_counters.write_merged_count
+                        } else {
+                            total_counters.write_merged_count
+                                + current_counters.write_merged_count
+                                + max_value
+                                - past_counters.write_merged_count
+                        }
+                    },
+                    busy_time: {
+                        if current_counters.busy_time >= past_counters.busy_time {
+                            total_counters.busy_time + current_counters.busy_time
+                                - past_counters.busy_time
+                        } else {
+                            total_counters.busy_time + current_counters.busy_time + max_value
+                                - past_counters.busy_time
+                        }
+                    },
                 },
-                write_count: {
-                    if current_counters.write_count >= past_counters.write_count {
-                        total_counters.write_count + current_counters.write_count
-                            - past_counters.write_count
-                    } else {
-                        total_counters.write_count + current_counters.write_count + max_value
-                            - past_counters.write_count
-                    }
-                },
-                read_bytes: {
-                    if current_counters.read_bytes >= past_counters.read_bytes {
-                        total_counters.read_bytes + current_counters.read_bytes
-                            - past_counters.read_bytes
-                    } else {
-                        total_counters.read_bytes + current_counters.read_bytes + max_value
-                            - past_counters.read_bytes
-                    }
-                },
-                write_bytes: {
-                    if current_counters.write_bytes >= past_counters.write_bytes {
-                        total_counters.write_bytes + current_counters.write_bytes
-                            - past_counters.write_bytes
-                    } else {
-                        total_counters.write_bytes + current_counters.write_bytes + max_value
-                            - past_counters.write_bytes
-                    }
-                },
-                read_time: {
-                    if current_counters.read_time >= past_counters.read_time {
-                        total_counters.read_time + current_counters.read_time
-                            - past_counters.read_time
-                    } else {
-                        total_counters.read_time + current_counters.read_time + max_value
-                            - past_counters.read_time
-                    }
-                },
-                write_time: {
-                    if current_counters.write_time >= past_counters.write_time {
-                        total_counters.write_time + current_counters.write_time
-                            - past_counters.write_time
-                    } else {
-                        total_counters.write_time + current_counters.write_time + max_value
-                            - past_counters.write_time
-                    }
-                },
-                read_merged_count: {
-                    if current_counters.read_merged_count >= past_counters.read_merged_count {
-                        total_counters.read_merged_count + current_counters.read_merged_count
-                            - past_counters.read_merged_count
-                    } else {
-                        total_counters.read_merged_count
-                            + current_counters.read_merged_count
-                            + max_value - past_counters.read_merged_count
-                    }
-                },
-                write_merged_count: {
-                    if current_counters.write_merged_count >= past_counters.write_merged_count {
-                        total_counters.write_merged_count + current_counters.write_merged_count
-                            - past_counters.write_merged_count
-                    } else {
-                        total_counters.write_merged_count
-                            + current_counters.write_merged_count
-                            + max_value - past_counters.write_merged_count
-                    }
-                },
-                busy_time: {
-                    if current_counters.busy_time >= past_counters.busy_time {
-                        total_counters.busy_time + current_counters.busy_time
-                            - past_counters.busy_time
-                    } else {
-                        total_counters.busy_time + current_counters.busy_time + max_value
-                            - past_counters.busy_time
-                    }
-                },
-            });
+            );
+        } else {
+            final_disk_io_counters.insert(name.clone(), *current_counters);
         }
     }
     final_disk_io_counters
