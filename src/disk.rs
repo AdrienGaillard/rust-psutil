@@ -155,6 +155,8 @@ impl DiskIOCountersNoWrap {
 
         for line in lines {
             let mut disk_infos: Vec<&str> = line.split_whitespace().collect();
+            // This function does not support kernel version under 2.6+.
+            // These versions do not have 14 fields per line in /proc/diskstats.
             if disk_infos.len() == 14 {
                 let name: &str = disk_infos[2];
                 disk_infos.remove(2);
@@ -162,7 +164,6 @@ impl DiskIOCountersNoWrap {
                 disk_infos.remove(0);
                 let disk_infos: Vec<u64> = line_disk_stats(disk_infos)?;
 
-                // This function does not support kernel version under 2.6+
                 if partitions.contains(&name) {
                     let ssize = get_sector_size(name)?;
                     disks_infos.push(DiskIOCounters {
@@ -406,7 +407,7 @@ fn total_disk_io_counters(
 /// (e.g. memory partitions such as /dev/shm).
 pub fn disk_partitions(all: bool) -> Result<Vec<MountedPartition>> {
     let fstypes = read_file(Path::new("/proc/filesystems"))?;
-    let fstype = fstype(&fstypes);
+    let fstypes = fstype(&fstypes);
     let partitions = read_file(Path::new("/proc/mounts"))?;
     let partitions_lines: Vec<&str> = partitions.lines().collect();
     let mut mounted_partitions: Vec<MountedPartition> = Vec::new();
@@ -423,7 +424,7 @@ pub fn disk_partitions(all: bool) -> Result<Vec<MountedPartition>> {
         if partition_infos.len() >= 4
             && !all
             && partition_infos[0] != ""
-            && fstype.contains(&partition_infos[2])
+            && fstypes.contains(&partition_infos[2])
         {
             mounted_partitions.push(MountedPartition {
                 device: String::from(partition_infos[0]),
