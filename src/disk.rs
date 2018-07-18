@@ -481,3 +481,94 @@ pub fn disk_usage(path: &str) -> Result<DiskUsage> {
         percent,
     })
 }
+
+#[cfg(test)]
+mod unit_test {
+    use super::*;
+
+    #[test]
+    fn line_disk_stats_test() {
+        let entry: Vec<&str> = vec!["15", "8", "5652335", "4682", "645", "96"];
+        let espected: Vec<u64> = vec![15, 8, 5652335, 4682, 645, 96];
+
+        let result = match line_disk_stats(entry) {
+            Ok(r) => r,
+            Err(e) => panic!("{}", e),
+        };
+        assert_eq!(result, espected);
+    }
+
+    #[test]
+    fn get_partitions_test() {
+        let entry: &str = "major minor  #blocks  name
+
+   7        0      88684 loop0
+   7        1      88980 loop1
+   7        2      88964 loop2
+   8        0  250059096 sda
+   8        1     524288 sda1
+   8        2     249023 sda2
+   8        3  249283584 sda3
+ 253        0  249281536 dm-0
+ 253        1   73240576 dm-1
+ 253        2   97652736 dm-2
+ 253        3    7811072 dm-3
+";
+        let espected: Vec<&str> = vec![
+            "dm-3", "dm-2", "dm-1", "dm-0", "sda3", "sda2", "sda1", "loop2", "loop1", "loop0",
+        ];
+
+        let result = match get_partitions(entry) {
+            Ok(r) => r,
+            Err(e) => panic!("{}", e),
+        };
+        assert_eq!(result, espected);
+    }
+
+    #[test]
+    fn fstype_test() {
+        let entry: &str = "nodev	sysfs
+nodev	rootfs
+nodev	ramfs
+nodev	bdev
+nodev	proc
+nodev	cpuset
+nodev	cgroup
+nodev	cgroup2
+nodev	tmpfs
+nodev	devtmpfs
+nodev	configfs
+nodev	debugfs
+nodev	tracefs
+nodev	securityfs
+nodev	sockfs
+nodev	dax
+nodev	bpf
+nodev	pipefs
+nodev	hugetlbfs
+nodev	devpts
+	ext3
+	ext2
+	ext4
+	squashfs
+	vfat
+nodev	ecryptfs
+	fuseblk
+nodev	fuse
+nodev	fusectl
+nodev	pstore
+nodev	efivarfs
+nodev   zfs
+nodev	mqueue
+	btrfs
+nodev	autofs
+nodev	overlay
+";
+        let espected: Vec<&str> = vec![
+            "ext3", "ext2", "ext4", "squashfs", "vfat", "fuseblk", "zfs", "btrfs",
+        ];
+
+        let result = fstype(entry);
+        assert_eq!(result, espected);
+    }
+}
