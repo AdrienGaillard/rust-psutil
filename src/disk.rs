@@ -74,8 +74,11 @@ pub struct DiskIOCounters {
 }
 
 /// Disk counter struct to use nowrap mode
+
 #[derive(Clone, Debug, Default)]
 pub struct DiskIOCountersCollector {
+
+
     /// Save the total of counters
     disk_io_counters: HashMap<String, DiskIOCounters>,
 
@@ -83,7 +86,9 @@ pub struct DiskIOCountersCollector {
     disk_io_counters_last_call: HashMap<String, DiskIOCounters>,
 }
 
+
 impl DiskIOCountersCollector {
+
     /// Reset de cache for disk_io_counter in nowrap mode
     pub fn cache_clear(&mut self) {
         self.disk_io_counters = HashMap::new();
